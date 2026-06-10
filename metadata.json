@@ -1,0 +1,6 @@
+{
+  "name": "Cinematic Intelligence",
+  "description": "RAG-powered conversational IMDB movies recommendation tool.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

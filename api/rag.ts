@@ -5,6 +5,30 @@ import { BaseEmbedding } from "@llamaindex/core/embeddings";
 import { ChatResponseChunk, LLMMetadata } from "@llamaindex/core/llms";
 import { getTMDBParams, fetchFromTMDB } from "./tmdb.js";
 
+// Helper function to fetch with retry on transient 502/503/504 errors
+async function fetchWithRetry(url: string, options: RequestInit, retries = 3, delay = 2000): Promise<Response> {
+  let lastResponse: Response | null = null;
+  let lastError: any = null;
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await fetch(url, options);
+      if (res.status === 502 || res.status === 503 || res.status === 504) {
+        lastResponse = res;
+        console.warn(`Hugging Face API returned transient status ${res.status}. Retrying in ${delay}ms... (Attempt ${i + 1}/${retries})`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      return res;
+    } catch (err: any) {
+      lastError = err;
+      console.warn(`Fetch request attempt ${i + 1} failed: ${err.message}. Retrying in ${delay}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  if (lastError) throw lastError;
+  return lastResponse || fetch(url, options);
+}
+
 // Custom LLM Class for Hugging Face Serverless Inference API
 export class HFLLM extends BaseLLM {
   model: string;
@@ -70,7 +94,7 @@ export class HFLLM extends BaseLLM {
     }
 
     try {
-      const res = await fetch(url, {
+      const res = await fetchWithRetry(url, {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -145,7 +169,7 @@ export class HFEmbedding extends BaseEmbedding {
     }
 
     try {
-      const res = await fetch(url, {
+      const res = await fetchWithRetry(url, {
         method: "POST",
         headers,
         body: JSON.stringify({

@@ -57,7 +57,10 @@ export class HFLLM extends BaseLLM {
     }
     prompt += "<|im_start|>assistant\n";
 
-    const url = `https://api-inference.huggingface.co/models/${this.model}`;
+    const baseUrl = process.env.HF_ENDPOINT || "https://api-inference.huggingface.co";
+    const cleanBaseUrl = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+    const url = `${cleanBaseUrl}/models/${this.model}`;
+    
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -99,6 +102,9 @@ export class HFLLM extends BaseLLM {
       return text.replace(/<\|im_end\|>/g, "").replace(/<\|im_start\|>/g, "").trim();
     } catch (error: any) {
       console.error("HF Inference API request failed:", error);
+      if (error.message && error.message.includes("ENOTFOUND")) {
+        console.error("⚠️ DIAGNOSTIC: The Hugging Face hostname could not be resolved. This is a local network/DNS issue or your region blocks Hugging Face. If Hugging Face is blocked, configure the HF_ENDPOINT environment variable in your .env or Vercel dashboard to a proxy mirror (e.g., https://api-inference.hf-mirror.com).");
+      }
       throw error;
     }
   }
@@ -127,7 +133,10 @@ export class HFEmbedding extends BaseEmbedding {
   }
 
   private async getEmbeddings(inputs: string[]): Promise<number[][]> {
-    const url = `https://api-inference.huggingface.co/models/${this.model}`;
+    const baseUrl = process.env.HF_ENDPOINT || "https://api-inference.huggingface.co";
+    const cleanBaseUrl = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+    const url = `${cleanBaseUrl}/models/${this.model}`;
+
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -168,8 +177,11 @@ export class HFEmbedding extends BaseEmbedding {
       
       console.warn("Unexpected HF embedding data structure, using fallback dim 384:", data);
       return Array(inputs.length).fill(Array(384).fill(0.1));
-    } catch (error) {
+    } catch (error: any) {
       console.error("HF embedding failed, falling back to dummy representation:", error);
+      if (error.message && error.message.includes("ENOTFOUND")) {
+        console.error("⚠️ DIAGNOSTIC: The Hugging Face hostname could not be resolved. This is a local network/DNS issue or your region blocks Hugging Face. If Hugging Face is blocked, configure the HF_ENDPOINT environment variable in your .env or Vercel dashboard to a proxy mirror (e.g., https://api-inference.hf-mirror.com).");
+      }
       return Array(inputs.length).fill(Array(384).fill(0.1));
     }
   }

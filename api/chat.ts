@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { setupSettings, handleChatRequest } from "../src/utils/rag.js";
+import { setupSettings, handleChatRequest } from "./rag.js";
 
 // Initialize LLM and Embedding settings once during serverless cold start
 setupSettings();

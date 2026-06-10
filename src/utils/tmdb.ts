@@ -1,6 +1,9 @@
 import { OpenAI } from "@llamaindex/openai";
 
-const TMDB_TOKEN = process.env.TMDB_BEARER_TOKEN || "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJjZDZkOGQ3NzgxNGM2ZDE4N2U2YzEzMWY2YTRhZmQ5YyIsIm5iZiI6MTcyMzU1MDU5OC4xMTAwMDAxLCJzdWIiOiI2NmJiNGI4NmRjNTM2MzNmNzBiZGU4ZjkiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.wdZNikWyz1KoVTFUEPeZrwxZc8LRP_z7RA4DjuNpq0U";
+const TMDB_TOKEN = process.env.TMDB_BEARER_TOKEN;
+if (!TMDB_TOKEN) {
+  console.warn("WARNING: TMDB_BEARER_TOKEN environment variable is missing.");
+}
 
 type TMDBParams = {
   search_type: "person" | "movie" | "discover_popular" | "discover_revenue" | "discover_top_rated" | "discover_budget";

@@ -10,6 +10,7 @@ type Message = {
   role: "user" | "assistant";
   content: string;
   metadata?: any[];
+  inferredParams?: any;
 };
 
 const INITIAL_MESSAGE: Message = {
@@ -64,7 +65,9 @@ export default function App() {
     if (!input.trim() || isLoading) return;
 
     const userMsg: Message = { id: Date.now().toString(), role: "user", content: input.trim() };
-    setMessages((prev) => [...prev, userMsg]);
+    const updatedMessages = [...messages, userMsg];
+    
+    setMessages(updatedMessages);
     setInput("");
     setIsLoading(true);
     setError("");
@@ -73,7 +76,9 @@ export default function App() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: userMsg.content }),
+        body: JSON.stringify({ 
+          messages: updatedMessages.map(m => ({ role: m.role, content: m.content })) 
+        }),
       });
       
       const data = await response.json();
@@ -84,7 +89,13 @@ export default function App() {
       
       setMessages((prev) => [
         ...prev,
-        { id: Date.now().toString(), role: "assistant", content: data.reply, metadata: data.movies },
+        { 
+          id: Date.now().toString(), 
+          role: "assistant", 
+          content: data.reply, 
+          metadata: data.movies,
+          inferredParams: data.inferredParams
+        },
       ]);
     } catch (err: any) {
       setError(err.message);
@@ -150,6 +161,25 @@ export default function App() {
                       <div className="absolute -top-1 -right-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <CopyButton text={msg.content} movies={msg.metadata} />
                       </div>
+                      {msg.inferredParams && (
+                        <div className="text-[10px] text-indigo-700 bg-indigo-50/50 border border-indigo-100 px-2 py-1 rounded-md self-start font-mono flex flex-wrap items-center gap-1.5 shadow-sm">
+                          <span className="font-bold uppercase tracking-wider">{msg.inferredParams.search_type.replace(/_/g, ' ')}</span>
+                          {msg.inferredParams.person_name && (
+                            <>
+                              <span className="text-slate-300">•</span>
+                              <span>Person: <strong className="text-slate-700">{msg.inferredParams.person_name}</strong></span>
+                            </>
+                          )}
+                          {msg.inferredParams.movie_name && (
+                            <>
+                              <span className="text-slate-300">•</span>
+                              <span>Movie: <strong className="text-slate-700">{msg.inferredParams.movie_name}</strong></span>
+                            </>
+                          )}
+                          <span className="text-slate-300">•</span>
+                          <span>Limit: <strong className="text-slate-700">{msg.inferredParams.number_of_movies_requested}</strong></span>
+                        </div>
+                      )}
                       <div className="prose prose-sm md:prose-base prose-slate max-w-none break-words [&>p:last-child]:mb-0 pr-6">
                         <ReactMarkdown>{msg.content}</ReactMarkdown>
                       </div>
@@ -164,7 +194,12 @@ export default function App() {
                             >
                               <Tooltip.Root>
                                 <Tooltip.Trigger asChild>
-                                  <div className="flex flex-col h-full bg-slate-100 rounded-lg shadow-sm border border-slate-200 cursor-pointer overflow-hidden hover:ring-2 hover:ring-indigo-400 transition-all">
+                                  <a 
+                                    href={`https://www.themoviedb.org/movie/${movie.tmdbId}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex flex-col h-full bg-slate-100 rounded-lg shadow-sm border border-slate-200 cursor-pointer overflow-hidden hover:ring-2 hover:ring-indigo-400 transition-all hover:scale-[1.02] duration-200"
+                                  >
                                     <img 
                                       src={movie.poster_path ? `https://image.tmdb.org/t/p/w500${movie.poster_path}` : `https://placehold.co/300x450/1e293b/ffffff?text=${encodeURIComponent(movie.title)}`} 
                                       alt={movie.title} 
@@ -173,7 +208,7 @@ export default function App() {
                                     <div className="p-2 text-xs font-semibold text-slate-700 truncate text-center bg-white flex-1 flex items-center justify-center">
                                       {movie.title}
                                     </div>
-                                  </div>
+                                  </a>
                                 </Tooltip.Trigger>
                                 <Tooltip.Portal>
                                   <Tooltip.Content

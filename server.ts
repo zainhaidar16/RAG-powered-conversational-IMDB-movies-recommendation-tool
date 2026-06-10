@@ -4,7 +4,7 @@ dotenv.config();
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { setupSettings, handleChatRequest } from "./src/utils/rag";
+import { setupSettings, handleChatRequest } from "./src/utils/rag.js";
 
 async function startServer() {
   // Initialize LLM and Embedding settings

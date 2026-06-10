@@ -3,7 +3,7 @@ import { OpenAI } from "@llamaindex/openai";
 import { OllamaEmbedding, Ollama } from "@llamaindex/ollama";
 import { BaseEmbedding } from "@llamaindex/core/embeddings";
 import { ChatResponseChunk, LLMMetadata } from "@llamaindex/core/llms";
-import { getTMDBParams, fetchFromTMDB } from "./tmdb";
+import { getTMDBParams, fetchFromTMDB } from "./tmdb.js";
 
 // Custom LLM Class for Hugging Face Serverless Inference API
 export class HFLLM extends BaseLLM {

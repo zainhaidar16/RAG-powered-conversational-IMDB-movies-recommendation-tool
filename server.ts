@@ -2,12 +2,18 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { Document, VectorStoreIndex, Settings } from "llamaindex";
-import { GeminiEmbedding } from "@llamaindex/google";
 import { OpenAI } from "@llamaindex/openai";
+import { BaseEmbedding } from "@llamaindex/core/embeddings";
 import dotenv from "dotenv";
 import { getTMDBParams, fetchFromTMDB } from "./src/utils/tmdb";
 
 dotenv.config();
+
+class DummyEmbedding extends BaseEmbedding {
+  async getTextEmbedding(text: string): Promise<number[]> {
+    return Array(1536).fill(0.1);
+  }
+}
 
 function setupSettings() {
   const openRouterApiKey = process.env.OPENROUTER_API_KEY;
@@ -24,17 +30,7 @@ function setupSettings() {
   });
   
   Settings.llm = llm;
-  Settings.embedModel = new GeminiEmbedding({ model: "gemini-embedding-2", apiKey: process.env.GEMINI_API_KEY });
-  
-  // Monkey patch broken batch embedding in llamaindex
-  Settings.embedModel.getTextEmbeddingsBatch = async (texts) => {
-    const res = [];
-    for (const text of texts) {
-       const embs = await Settings.embedModel.getTextEmbeddings([text]);
-       res.push(embs[0]);
-    }
-    return res;
-  };
+  Settings.embedModel = new DummyEmbedding();
 }
 
 async function startServer() {

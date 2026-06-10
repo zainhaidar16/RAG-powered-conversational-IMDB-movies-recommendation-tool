@@ -11,8 +11,6 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/genai": "^2.4.0",
-    "@llamaindex/google": "^0.4.0",
     "@llamaindex/openai": "^0.4.22",
     "@radix-ui/react-tooltip": "^1.2.9",
     "@tailwindcss/typography": "^0.5.20",

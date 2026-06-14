@@ -30,14 +30,14 @@ async function fetchWithRetry(url: string, options: RequestInit, retries = 3, de
       const res = await fetch(url, options);
       if ([502, 503, 504].includes(res.status)) {
         lastResponse = res;
-        console.warn(`Hugging Face API returned transient status ${res.status}. Retrying in ${delay}ms… (Attempt ${i + 1}/${retries})`);
+        console.warn(`Hugging Face API returned transient status ${res.status}. Retrying in ${delay}ms. Attempt ${i + 1}/${retries}`);
         await new Promise((resolve) => setTimeout(resolve, delay));
         continue;
       }
       return res;
     } catch (err: any) {
       lastError = err;
-      console.warn(`Fetch request attempt ${i + 1} failed: ${err.message}. Retrying in ${delay}ms…`);
+      console.warn(`Fetch request attempt ${i + 1} failed: ${err.message}. Retrying in ${delay}ms.`);
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
@@ -105,7 +105,7 @@ export class HFLLM extends BaseLLM {
     for (const model of models) {
       console.log(`Using Hugging Face Router chat completions with model "${model}"`);
       try {
-        const res = await fetchWithRetry("https://router.huggingface.co/v1/chat/completions", { method: "POST", headers, body: JSON.stringify({ model, messages: chatMessages, max_tokens: 512, temperature: 0.1, stream: false }) });
+        const res = await fetchWithRetry("https://router.huggingface.co/v1/chat/completions", { method: "POST", headers, body: JSON.stringify({ model, messages: chatMessages, max_tokens: 1200, temperature: 0.1, stream: false }) });
         if (!res.ok) {
           const message = classifyHttpError(res.status, await res.text());
           const err = new Error(message);
@@ -197,17 +197,9 @@ function buildMoviePayload(movie: any) {
   };
 }
 
-function buildDeterministicPersonReply(movies: any[], params: any): string {
-  const role = params.person_role === "director" ? "directed by" : params.person_role === "actor" ? "featuring" : "linked to";
-  const person = params.person_name || "this person";
-  const lines = movies.map((movie: any, index: number) => {
-    const title = movie.title || movie.name;
-    const year = (movie.release_date || movie.first_air_date || "N/A").slice(0, 4) || "N/A";
-    const rating = movie.vote_average ? `${Number(movie.vote_average).toFixed(1)}/10` : "N/A";
-    const roleText = movie.person_job ? `, role: ${movie.person_job}` : "";
-    return `${index + 1}. ${title} (${year}), Rating: ${rating}${roleText}`;
-  });
-  return `Found ${movies.length} TMDB movie result${movies.length === 1 ? "" : "s"} ${role} ${person}:\n\n${lines.join("\n")}`;
+function shouldReturnAllFetchedMovies(params: any, latestMessage: string): boolean {
+  const text = latestMessage.toLowerCase();
+  return params?.search_type === "person" || text.includes("all") || text.includes("list") || text.includes("show me") || text.includes("directed") || text.includes("starring");
 }
 
 export async function handleChatRequest(messages: any[]) {
@@ -238,24 +230,17 @@ export async function handleChatRequest(messages: any[]) {
     return { reply: `I couldn't find matching movies in TMDB for this query.`, movies: [], inferredParams: tmdbParams };
   }
 
-  if (tmdbParams.search_type === "person") {
-    return {
-      reply: buildDeterministicPersonReply(tmdbMovies, tmdbParams),
-      movies: tmdbMovies.map(buildMoviePayload),
-      inferredParams: tmdbParams,
-    };
-  }
-
   const documents = tmdbMovies.map((movie: any) => new Document({
-    text: `TMDB ID: ${movie.id}\nTitle: ${movie.title || movie.name}\nRelease Date: ${movie.release_date || movie.first_air_date}\nRating: ${movie.vote_average || "N/A"}/10\nPopularity: ${movie.popularity}\nOverview: ${movie.overview}`,
-    metadata: { title: movie.title || movie.name, poster_path: movie.poster_path, tmdbId: String(movie.id) },
+    text: `TMDB ID: ${movie.id}\nTitle: ${movie.title || movie.name}\nRelease Date: ${movie.release_date || movie.first_air_date}\nRating: ${movie.vote_average || "N/A"}/10\nPopularity: ${movie.popularity}\nPerson: ${tmdbParams.person_name || "N/A"}\nPerson Role: ${movie.person_job || "N/A"}\nOverview: ${movie.overview}`,
+    metadata: { title: movie.title || movie.name, poster_path: movie.poster_path, tmdbId: String(movie.id), person_job: movie.person_job || "" },
   }));
 
   const index = await VectorStoreIndex.fromDocuments(documents);
   const queryEngine = index.asQueryEngine({ similarityTopK: tmdbMovies.length });
   const allowedIds = tmdbMovies.map((movie: any) => movie.id).join(", ");
-  const movieList = tmdbMovies.map((movie: any) => `- ${movie.title || movie.name} (${movie.release_date || movie.first_air_date || "N/A"}), TMDB ID ${movie.id}, rating ${movie.vote_average || "N/A"}`).join("\n");
-  const prompt = `You are a movie recommendation assistant. Use ONLY the movies in this list.\nDo NOT recommend any movie outside this list.\nAllowed TMDB IDs: ${allowedIds}\n\nMovie list:\n${movieList}\n\nAnswer the user's query clearly with titles, years, ratings, and short summaries from context.\nAt the very end, output exactly one line:\n[RECOMMENDATIONS: id1, id2, ...]\nOnly include numeric TMDB IDs from the allowed list.\n\nQuery: ${latestMessage}`;
+  const movieList = tmdbMovies.map((movie: any) => `- ${movie.title || movie.name} (${movie.release_date || movie.first_air_date || "N/A"}), TMDB ID ${movie.id}, rating ${movie.vote_average || "N/A"}, role ${movie.person_job || "N/A"}`).join("\n");
+  const roleRule = tmdbParams.search_type === "person" ? `\nThe TMDB fetch already applied the correct person role filter. If person_role is director, every movie in the list is directed by ${tmdbParams.person_name}. If person_role is actor, every movie in the list features ${tmdbParams.person_name}.` : "";
+  const prompt = `You are a RAG movie assistant. Answer ONLY from the retrieved TMDB context and allowed movie list.\nDo not recommend or mention any movie outside the allowed list.\nAllowed TMDB IDs: ${allowedIds}\nSearch Type: ${tmdbParams.search_type}\nPerson: ${tmdbParams.person_name || "N/A"}\nPerson Role: ${tmdbParams.person_role || "N/A"}${roleRule}\n\nAllowed movie list:\n${movieList}\n\nAnswer the user's question accurately. If the user asks for all movies, a list, directed movies, actor movies, or a person filmography, include the full allowed list. Do not randomly shorten it to 3 or 5 results.\nAt the end, output exactly one line:\n[RECOMMENDATIONS: id1, id2, ...]\nOnly include TMDB IDs from the allowed list.\n\nUser query: ${latestMessage}`;
 
   const response = await queryEngine.query({ query: prompt });
   let replyText = typeof response.response === "string" ? response.response : String(response.response);
@@ -268,7 +253,11 @@ export async function handleChatRequest(messages: any[]) {
     replyText = replyText.replace(recsRegex, "").trim();
   }
 
-  const matchedMovies = recommendedIds.length > 0 ? tmdbMovies.filter((movie: any) => recommendedIds.includes(movie.id)) : tmdbMovies;
+  const matchedMovies = shouldReturnAllFetchedMovies(tmdbParams, latestMessage)
+    ? tmdbMovies
+    : recommendedIds.length > 0
+      ? tmdbMovies.filter((movie: any) => recommendedIds.includes(movie.id))
+      : tmdbMovies;
 
   return {
     reply: replyText,

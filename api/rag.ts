@@ -73,6 +73,16 @@ function classifyHttpError(status: number, body: string): string {
   if (status === 429) {
     return "Hugging Face API rate limit exceeded. Please wait and retry.";
   }
+  if (status === 502) {
+    return "Hugging Face Router returned 502 Bad Gateway. The provider behind the selected model is unavailable or overloaded. Confirm Vercel is using LLM_MODEL=meta-llama/Llama-3.1-8B-Instruct:fastest and redeploy without build cache.";
+  }
+  if (status === 503) {
+    return "Hugging Face model is loading or temporarily unavailable. Retry shortly or use a smaller Hugging Face model.";
+  }
+  if (status === 504) {
+    return "Hugging Face request timed out. The selected model may be too slow for Vercel serverless.";
+  }
+
   // Try to detect model-loading responses even on non-200 codes
   try {
     const parsed = JSON.parse(body);
@@ -83,25 +93,14 @@ function classifyHttpError(status: number, body: string): string {
       return `Hugging Face API error: ${parsed.error}`;
     }
   } catch {
-    // not JSON — fall through
-  }
-  if (status === 502) {
-    return "Hugging Face returned 502 Bad Gateway. The selected model is likely unavailable, overloaded, or too heavy for Serverless Inference. Use a smaller Hugging Face model such as HuggingFaceTB/SmolLM2-1.7B-Instruct.";
-  }
-
-  if (status === 503) {
-    return "Hugging Face model is loading or temporarily unavailable. Retry shortly or use a smaller Hugging Face model.";
-  }
-
-  if (status === 504) {
-    return "Hugging Face request timed out. The selected model may be too slow for Vercel serverless.";
+    // not JSON, fall through
   }
 
   return `Hugging Face API error: ${status} - ${body.slice(0, 200)}`;
 }
 
 // ---------------------------------------------------------------------------
-// Custom LLM — Hugging Face Serverless Inference API
+// Custom LLM, Hugging Face Router chat completions
 // ---------------------------------------------------------------------------
 
 export class HFLLM extends BaseLLM {
@@ -168,6 +167,7 @@ export class HFLLM extends BaseLLM {
     };
 
     const model = this.model.includes(":") ? this.model : `${this.model}:fastest`;
+    console.log(`Using Hugging Face Router chat completions with model "${model}"`);
 
     const res = await fetchWithRetry(url, {
       method: "POST",
@@ -212,7 +212,7 @@ export class HFLLM extends BaseLLM {
 }
 
 // ---------------------------------------------------------------------------
-// Custom Embedding — Hugging Face Serverless Inference API
+// Custom Embedding, Hugging Face Serverless Inference API
 // ---------------------------------------------------------------------------
 
 export class HFEmbedding extends BaseEmbedding {
@@ -281,7 +281,7 @@ export class HFEmbedding extends BaseEmbedding {
       }
     }
 
-    // --- Parse the various response shapes HF can return ---
+    // Parse the various response shapes HF can return
 
     if (inputs.length === 1) {
       // Single input can come back as number[] or number[][] or number[][][]
@@ -290,7 +290,7 @@ export class HFEmbedding extends BaseEmbedding {
         data.length > 0 &&
         typeof data[0] === "number"
       ) {
-        // Shape: number[] — a single flat embedding vector
+        // Shape: number[], a single flat embedding vector
         return [data];
       }
       if (
@@ -298,7 +298,7 @@ export class HFEmbedding extends BaseEmbedding {
         Array.isArray(data[0]) &&
         typeof data[0][0] === "number"
       ) {
-        // Shape: number[][] — take the first row (sentence embedding)
+        // Shape: number[][], take the first row (sentence embedding)
         return [data[0]];
       }
       if (
@@ -307,7 +307,7 @@ export class HFEmbedding extends BaseEmbedding {
         Array.isArray(data[0][0]) &&
         typeof data[0][0][0] === "number"
       ) {
-        // Shape: number[][][] — token-level; mean-pool across tokens
+        // Shape: number[][][], token-level; mean-pool across tokens
         const tokenVectors: number[][] = data[0];
         const dim = tokenVectors[0].length;
         const pooled = new Array(dim).fill(0);
@@ -324,7 +324,7 @@ export class HFEmbedding extends BaseEmbedding {
         Array.isArray(data[0]) &&
         typeof data[0][0] === "number"
       ) {
-        // Shape: number[][] — one flat vector per input
+        // Shape: number[][], one flat vector per input
         return data as number[][];
       }
       if (
@@ -333,7 +333,7 @@ export class HFEmbedding extends BaseEmbedding {
         Array.isArray(data[0][0]) &&
         typeof data[0][0][0] === "number"
       ) {
-        // Shape: number[][][] — token-level per input; mean-pool each
+        // Shape: number[][][], token-level per input; mean-pool each
         return data.map((tokenVectors: number[][]) => {
           const dim = tokenVectors[0].length;
           const pooled = new Array(dim).fill(0);
@@ -346,7 +346,7 @@ export class HFEmbedding extends BaseEmbedding {
       }
     }
 
-    // If we get here, the response shape is completely unexpected — throw
+    // If we get here, the response shape is completely unexpected, throw
     throw new Error(
       `Hugging Face embedding returned an unsupported response shape. ` +
       `Model: ${this.model}. Response preview: ${JSON.stringify(data).slice(0, 200)}`
@@ -355,7 +355,7 @@ export class HFEmbedding extends BaseEmbedding {
 }
 
 // ---------------------------------------------------------------------------
-// Settings — Hugging Face only
+// Settings, Hugging Face only
 // ---------------------------------------------------------------------------
 
 export function setupSettings() {
@@ -435,7 +435,7 @@ Standalone query:`;
     };
   }
 
-  // 5. Build RAG index dynamically — TMDB ID is embedded in document text
+  // 5. Build RAG index dynamically, TMDB ID is embedded in document text
   const documents = tmdbMovies.map(
     (movie: any) =>
       new Document({

@@ -7,9 +7,7 @@ function validateEnvironment(): void {
   console.log("TMDB_BEARER_TOKEN:", process.env.TMDB_BEARER_TOKEN ? "present" : "missing");
   const required = ["TMDB_BEARER_TOKEN", "HF_TOKEN", "LLM_MODEL", "EMBEDDING_MODEL"];
   const missing = required.filter((key) => !process.env[key]);
-  if (missing.length > 0) {
-    throw new Error(`Missing required environment variables: ${missing.join(", ")}.`);
-  }
+  if (missing.length > 0) throw new Error(`Missing required environment variables: ${missing.join(", ")}.`);
 }
 
 function readableError(value: any): string {
@@ -68,9 +66,7 @@ function meanPool(tokenVectors: number[][]): number[] {
 }
 
 function parseEmbeddingResponse(data: any, inputCount: number, model: string): number[][] {
-  if (data && typeof data === "object" && !Array.isArray(data) && "error" in data) {
-    throw new Error(`Hugging Face embedding error: ${readableError(data.error)}`);
-  }
+  if (data && typeof data === "object" && !Array.isArray(data) && "error" in data) throw new Error(`Hugging Face embedding error: ${readableError(data.error)}`);
   if (inputCount === 1) {
     if (Array.isArray(data) && typeof data[0] === "number") return [data];
     if (Array.isArray(data) && Array.isArray(data[0]) && typeof data[0][0] === "number") return [data[0]];
@@ -86,24 +82,20 @@ export class HFLLM extends BaseLLM {
   model: string;
   token: string;
   metadata: LLMMetadata;
-
   constructor(model: string, token: string) {
     super();
     this.model = model;
     this.token = token;
     this.metadata = { model, temperature: 0.1, topP: 0.9, contextWindow: 4096, tokenizer: undefined, structuredOutput: false };
   }
-
   async chat(params: any): Promise<any> {
     const content = await this.callInference(params.messages);
     return { message: { role: "assistant", content }, raw: {} };
   }
-
   async *streamChat(messages: any[]): AsyncIterable<ChatResponseChunk> {
     const content = await this.callInference(messages);
     yield { raw: {}, delta: content };
   }
-
   private async callInference(messages: any[]): Promise<string> {
     const chatMessages = messages.map((msg: any) => ({ role: msg.role === "system" ? "system" : msg.role === "assistant" ? "assistant" : "user", content: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content) }));
     const headers = { "Content-Type": "application/json", Authorization: "Bearer " + this.token };
@@ -140,34 +132,23 @@ export class HFEmbedding extends BaseEmbedding {
   private model: string;
   private token: string;
   private activeModel: string | null = null;
-
   constructor(model: string, token: string) {
     super();
     this.model = model;
     this.token = token;
   }
-
-  async getTextEmbedding(text: string): Promise<number[]> {
-    return (await this.getEmbeddings([text]))[0];
-  }
-
+  async getTextEmbedding(text: string): Promise<number[]> { return (await this.getEmbeddings([text]))[0]; }
   async getQueryEmbedding(query: any): Promise<number[]> {
     const text = typeof query === "string" ? query : query?.content || String(query);
     return (await this.getEmbeddings([text]))[0];
   }
-
   private async getEmbeddings(inputs: string[]): Promise<number[][]> {
     const headers = { "Content-Type": "application/json", Authorization: "Bearer " + this.token };
     const models = Array.from(new Set([this.activeModel || this.model, "sentence-transformers/all-MiniLM-L6-v2", "BAAI/bge-small-en-v1.5"]));
     let lastError: Error | null = null;
-
     for (const model of models) {
       const encoded = model.split("/").map(encodeURIComponent).join("/");
-      const urls = [
-        `https://router.huggingface.co/hf-inference/models/${encoded}/pipeline/feature-extraction`,
-        `https://api-inference.huggingface.co/models/${encoded}`,
-      ];
-
+      const urls = [`https://router.huggingface.co/hf-inference/models/${encoded}/pipeline/feature-extraction`, `https://api-inference.huggingface.co/models/${encoded}`];
       for (const url of urls) {
         console.log(`Using Hugging Face embeddings with model "${model}" via ${url.includes("router.huggingface.co") ? "router" : "api-inference"}`);
         try {
@@ -205,6 +186,11 @@ export function setupSettings() {
   Settings.embedModel = new HFEmbedding(embedModelName, hfToken);
 }
 
+function isDirectorQuery(message: string, params: any): boolean {
+  const text = message.toLowerCase();
+  return params?.person_role === "director" || text.includes("directed") || text.includes("director");
+}
+
 export async function handleChatRequest(messages: any[]) {
   const latestMessage = messages[messages.length - 1].content;
   let searchMessage = latestMessage;
@@ -226,21 +212,28 @@ export async function handleChatRequest(messages: any[]) {
   console.log("TMDB Params:", tmdbParams);
   tmdbParams.number_of_movies_requested = Math.min(Math.max(tmdbParams.number_of_movies_requested || 10, 1), 10);
 
-  const tmdbMovies = await fetchFromTMDB(tmdbParams);
+  let tmdbMovies = await fetchFromTMDB(tmdbParams);
+  if (tmdbParams.search_type === "person" && isDirectorQuery(searchMessage, tmdbParams)) {
+    tmdbMovies = tmdbMovies.filter((movie: any) => movie.person_job === "Director");
+    console.log(`Filtered to ${tmdbMovies.length} director credits only`);
+  }
   console.log(`Fetched ${tmdbMovies.length} movies from TMDB`);
 
   if (!tmdbMovies || tmdbMovies.length === 0) {
-    return { reply: "I couldn't find any relevant movies in the database matching your query.", movies: [] };
+    return { reply: `I couldn't find matching movies in TMDB for this query.`, movies: [], inferredParams: tmdbParams };
   }
 
   const documents = tmdbMovies.map((movie: any) => new Document({
-    text: `TMDB ID: ${movie.id}\nTitle: ${movie.title || movie.name}\nRelease Date: ${movie.release_date || movie.first_air_date}\nRating: ${movie.vote_average || "N/A"}/10\nPopularity: ${movie.popularity}\n${movie.person_job ? `Role for ${tmdbParams.person_name}: ${movie.person_job}` : ""}\nOverview: ${movie.overview}`,
-    metadata: { title: movie.title || movie.name, poster_path: movie.poster_path, tmdbId: String(movie.id) },
+    text: `TMDB ID: ${movie.id}\nTitle: ${movie.title || movie.name}\nRelease Date: ${movie.release_date || movie.first_air_date}\nRating: ${movie.vote_average || "N/A"}/10\nPopularity: ${movie.popularity}\nPerson: ${tmdbParams.person_name || "N/A"}\nPerson Role: ${movie.person_job || "N/A"}\n${movie.person_job ? `Role for ${tmdbParams.person_name}: ${movie.person_job}` : ""}\nOverview: ${movie.overview}`,
+    metadata: { title: movie.title || movie.name, poster_path: movie.poster_path, tmdbId: String(movie.id), person_job: movie.person_job || "" },
   }));
 
   const index = await VectorStoreIndex.fromDocuments(documents);
   const queryEngine = index.asQueryEngine({ similarityTopK: tmdbMovies.length });
-  const prompt = `You are a helpful and expert movie recommendation assistant. Use the provided context to answer the user's movie query precisely and exhaustively.\nSearch Type used: "${tmdbParams.search_type}"\nAssociated Person, if any: "${tmdbParams.person_name || "N/A"}"\nAt the very end of your response, on a final new line, output:\n[RECOMMENDATIONS: id1, id2, ...]\nOnly include numeric TMDB IDs of movies you recommended.\n\nQuery: ${latestMessage}`;
+  const allowedIds = tmdbMovies.map((movie: any) => movie.id).join(", ");
+  const movieList = tmdbMovies.map((movie: any) => `- ${movie.title || movie.name} (${movie.release_date || movie.first_air_date || "N/A"}), TMDB ID ${movie.id}, rating ${movie.vote_average || "N/A"}, role ${movie.person_job || "N/A"}`).join("\n");
+  const strictRoleRule = isDirectorQuery(searchMessage, tmdbParams) ? `\nDIRECTOR QUERY RULE: Only recommend movies where Person Role is Director for ${tmdbParams.person_name}.` : "";
+  const prompt = `You are a movie recommendation assistant. You MUST answer using ONLY the movies in the provided context and movie list below.\nDo NOT mention or recommend any movie outside this list.\nDo NOT say there is no information if the movie list contains matching movies.\nAllowed TMDB IDs: ${allowedIds}\nSearch Type: "${tmdbParams.search_type}"\nAssociated Person: "${tmdbParams.person_name || "N/A"}"${strictRoleRule}\n\nMovie list you are allowed to use:\n${movieList}\n\nAnswer the user's query clearly with titles, years, ratings, and short summaries from context.\nAt the very end, output exactly one line:\n[RECOMMENDATIONS: id1, id2, ...]\nOnly include numeric TMDB IDs from the allowed list.\n\nQuery: ${latestMessage}`;
   const response = await queryEngine.query({ query: prompt });
   let replyText = typeof response.response === "string" ? response.response : String(response.response);
 
@@ -248,18 +241,11 @@ export async function handleChatRequest(messages: any[]) {
   const recsRegex = /\[RECOMMENDATIONS:\s*([\d\s,]*?)\]/i;
   const recsMatch = replyText.match(recsRegex);
   if (recsMatch) {
-    recommendedIds = recsMatch[1].split(",").map((id) => parseInt(id.trim(), 10)).filter((id) => !isNaN(id));
+    recommendedIds = recsMatch[1].split(",").map((id) => parseInt(id.trim(), 10)).filter((id) => tmdbMovies.some((movie: any) => movie.id === id));
     replyText = replyText.replace(recsRegex, "").trim();
   }
 
-  const matchedMovies = recommendedIds.length > 0
-    ? tmdbMovies.filter((movie: any) => recommendedIds.includes(movie.id))
-    : tmdbMovies.filter((movie: any) => {
-        const title = movie.title || movie.name;
-        if (!title || title.length <= 2) return false;
-        const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        return new RegExp(`\\b${escapedTitle}\\b`, "i").test(replyText);
-      });
+  const matchedMovies = recommendedIds.length > 0 ? tmdbMovies.filter((movie: any) => recommendedIds.includes(movie.id)) : tmdbMovies;
 
   return {
     reply: replyText,

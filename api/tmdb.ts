@@ -36,8 +36,55 @@ const TMDB_GENRES: Record<string, number> = {
 function inferPersonRole(message: string): "director" | "actor" | "any" {
   const text = message.toLowerCase();
   if (text.includes("directed") || text.includes("director") || text.includes("filmmaker") || text.includes("made by")) return "director";
-  if (text.includes("starring") || text.includes("actor") || text.includes("acted") || text.includes("cast") || text.includes("featuring")) return "actor";
+  if (text.includes("starring") || text.includes("starred") || text.includes("actor") || text.includes("acted") || text.includes("cast") || text.includes("featuring")) return "actor";
   return "any";
+}
+
+function cleanPersonName(name: string): string {
+  return name
+    .replace(/\b(show|me|all|list|movies|movie|films|film|by|from|of|the|a|an|please|recommend|give)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function deterministicPersonParams(message: string): TMDBParams | null {
+  const original = message.replace(/["']/g, " ").replace(/\s+/g, " ").trim();
+  const lower = original.toLowerCase();
+
+  const directorPatterns = [
+    /(?:movies|films)?\s*directed\s+by\s+([a-zA-Z .'-]+)/i,
+    /([a-zA-Z .'-]+?)\s+(?:directed|director|filmography as director|movies as director)/i,
+    /(?:director|filmmaker)\s+([a-zA-Z .'-]+)/i,
+    /(?:movies|films)\s+by\s+([a-zA-Z .'-]+)/i,
+  ];
+
+  const actorPatterns = [
+    /(?:movies|films)?\s*(?:starring|featuring)\s+([a-zA-Z .'-]+)/i,
+    /([a-zA-Z .'-]+?)\s+(?:movies|films|acting credits|actor credits)/i,
+    /(?:actor|actress)\s+([a-zA-Z .'-]+)/i,
+  ];
+
+  if (lower.includes("directed") || lower.includes("director") || lower.includes("filmmaker") || lower.includes("made by")) {
+    for (const pattern of directorPatterns) {
+      const match = original.match(pattern);
+      const person = match?.[1] ? cleanPersonName(match[1]) : "";
+      if (person && person.split(" ").length >= 2) {
+        return { search_type: "person", person_name: person, person_role: "director", number_of_movies_requested: 999 };
+      }
+    }
+  }
+
+  if (lower.includes("starring") || lower.includes("featuring") || lower.includes("acted") || lower.includes("actor") || lower.includes("cast")) {
+    for (const pattern of actorPatterns) {
+      const match = original.match(pattern);
+      const person = match?.[1] ? cleanPersonName(match[1]) : "";
+      if (person && person.split(" ").length >= 2) {
+        return { search_type: "person", person_name: person, person_role: "actor", number_of_movies_requested: 999 };
+      }
+    }
+  }
+
+  return null;
 }
 
 function cleanJsonText(text: string): string {
@@ -50,6 +97,12 @@ function cleanJsonText(text: string): string {
 }
 
 export async function getTMDBParams(message: string): Promise<TMDBParams> {
+  const deterministic = deterministicPersonParams(message);
+  if (deterministic) {
+    console.log("Using deterministic TMDB person params:", deterministic);
+    return deterministic;
+  }
+
   const llm = Settings.llm;
   if (!llm) throw new Error("LLM not initialized. Call setupSettings() before getTMDBParams().");
 
@@ -90,7 +143,7 @@ Role hint: ${roleHint}`;
     return params;
   } catch (err) {
     console.error("Failed to parse LLM TMDB params JSON:", err, "Raw text:", text);
-    return { search_type: "discover_popular", number_of_movies_requested: 50 };
+    return { search_type: "search_query", query: message, number_of_movies_requested: 50 };
   }
 }
 

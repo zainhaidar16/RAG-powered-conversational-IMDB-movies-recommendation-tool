@@ -31,13 +31,13 @@ type Message = {
   inferredParams?: any;
 };
 
-const APP_NAME = "ReelMind AI";
+const APP_NAME = "MovieRAG AI";
 
 const INITIAL_MESSAGE: Message = {
   id: "welcome",
   role: "assistant",
   content:
-    "Welcome to **ReelMind AI**. Ask natural movie questions and I will turn them into a live TMDB retrieval plan, build a RAG context, and answer with matching films.\n\nTry questions like:\n\n- Recommend some high-concept sci-fi movies about time travel and space exploration\n- What are Christopher Nolan's highest-rated movies? Tell me about the plot of Interstellar.\n- Show me some high-revenue action thriller films from the 2000s",
+    "Welcome to **MovieRAG AI**. Ask natural movie questions and I will turn them into a live TMDB retrieval plan, build a RAG context, and answer with matching films.\n\nTry questions like:\n\n- Recommend some high-concept sci-fi movies about time travel and space exploration\n- What are Christopher Nolan's highest-rated movies? Tell me about the plot of Interstellar.\n- Show me some high-revenue action thriller films from the 2000s",
 };
 
 const SUGGESTIONS = [
@@ -259,11 +259,11 @@ export default function App() {
               <section className="rounded-[2rem] border border-zinc-950/10 bg-white/75 p-6 shadow-xl shadow-zinc-950/5 backdrop-blur">
                 <div className="inline-flex items-center gap-2 rounded-full bg-zinc-950 px-3 py-1 text-xs font-semibold text-white">
                   <Sparkles className="h-3.5 w-3.5" />
-                  Intelligent movie search
+                  Intelligent movie RAG
                 </div>
                 <h2 className="mt-5 text-3xl font-semibold leading-tight tracking-tight">Ask like a human. Search like an analyst.</h2>
                 <p className="mt-3 text-sm leading-6 text-zinc-600">
-                  ReelMind AI reads your question, plans a TMDB retrieval strategy, builds a temporary vector index, and answers with movie cards.
+                  MovieRAG AI reads your question, plans a TMDB retrieval strategy, builds a temporary vector index, and answers with movie cards.
                 </p>
               </section>
 
@@ -310,13 +310,13 @@ export default function App() {
                       transition={{ duration: 0.25 }}
                       className={cn("flex", msg.role === "user" ? "justify-end" : "justify-start")}
                     >
-                      <div className={cn("max-w-[92%] rounded-[1.6rem] px-5 py-4 shadow-sm", msg.role === "user" ? "bg-zinc-950 text-white" : "w-full border border-zinc-950/10 bg-white text-zinc-800")}> 
+                      <div className={cn("max-w-[92%] rounded-[1.6rem] px-5 py-4 shadow-sm", msg.role === "user" ? "bg-zinc-950 text-white" : "w-full border border-zinc-950/10 bg-white text-zinc-800")}>
                         {msg.role === "assistant" ? (
                           <div className="space-y-4">
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.16em] text-zinc-400">
                                 <Bot className="h-4 w-4" />
-                                ReelMind response
+                                MovieRAG response
                               </div>
                               <CopyButton text={msg.content} movies={msg.metadata} />
                             </div>
@@ -454,7 +454,7 @@ export default function App() {
                   type="text"
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
-                  placeholder="Ask ReelMind AI about directors, plots, genres, revenue, decades, ratings..."
+                  placeholder="Ask MovieRAG AI about directors, plots, genres, revenue, decades, ratings..."
                   disabled={isLoading}
                   className="min-w-0 flex-1 bg-transparent px-4 py-3 text-sm font-medium text-zinc-950 outline-none placeholder:text-zinc-400"
                 />

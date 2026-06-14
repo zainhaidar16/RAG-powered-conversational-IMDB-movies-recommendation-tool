@@ -147,46 +147,37 @@ export class HFLLM extends BaseLLM {
   }
 
   private async callInference(messages: any[]): Promise<string> {
-    let prompt = "";
-    for (const msg of messages) {
-      const roleName =
-        msg.role === "user"
-          ? "user"
-          : msg.role === "system"
-            ? "system"
-            : "assistant";
-      const contentText =
+    const chatMessages = messages.map((msg: any) => ({
+      role:
+        msg.role === "system"
+          ? "system"
+          : msg.role === "assistant"
+            ? "assistant"
+            : "user",
+      content:
         typeof msg.content === "string"
           ? msg.content
-          : JSON.stringify(msg.content);
-      prompt += `<|im_start|>${roleName}\n${contentText}<|im_end|>\n`;
-    }
-    prompt += "<|im_start|>assistant\n";
+          : JSON.stringify(msg.content),
+    }));
 
-    const baseUrl =
-      process.env.HF_ENDPOINT || "https://api-inference.huggingface.co";
-    const cleanBaseUrl = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
-    const url = `${cleanBaseUrl}/models/${this.model}`;
+    const url = "https://router.huggingface.co/v1/chat/completions";
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
+      Authorization: `Bearer ${this.token}`,
     };
 
-    if (this.token && this.token.trim() !== "") {
-      headers["Authorization"] = `Bearer ${this.token}`;
-    }
+    const model = this.model.includes(":") ? this.model : `${this.model}:fastest`;
 
     const res = await fetchWithRetry(url, {
       method: "POST",
       headers,
       body: JSON.stringify({
-        inputs: prompt,
-        parameters: {
-          max_new_tokens: 512,
-          temperature: 0.1,
-          return_full_text: false,
-        },
-        options: { wait_for_model: true },
+        model,
+        messages: chatMessages,
+        max_tokens: 512,
+        temperature: 0.1,
+        stream: false,
       }),
     });
 
@@ -197,39 +188,22 @@ export class HFLLM extends BaseLLM {
 
     const data = await res.json();
 
-    // Handle object-level errors (e.g. model loading, server errors)
-    if (data && typeof data === "object" && !Array.isArray(data)) {
-      if ("error" in data) {
-        const extra =
-          "estimated_time" in data
-            ? ` Model is loading (estimated ${Math.ceil(data.estimated_time)}s).`
-            : "";
-        throw new Error(`Hugging Face LLM error: ${data.error}.${extra}`);
-      }
+    if (data?.error) {
+      throw new Error(
+        typeof data.error === "string"
+          ? data.error
+          : JSON.stringify(data.error).slice(0, 300)
+      );
     }
 
-    let text = "";
-    if (
-      Array.isArray(data) &&
-      data[0] &&
-      typeof data[0].generated_text === "string"
-    ) {
-      text = data[0].generated_text;
-    } else if (typeof data.generated_text === "string") {
-      text = data.generated_text;
-    } else if (typeof data.text === "string") {
-      text = data.text;
-    } else if (
-      Array.isArray(data) &&
-      data[0] &&
-      typeof data[0].text === "string"
-    ) {
-      text = data[0].text;
-    } else {
-      text = JSON.stringify(data);
+    const text = data?.choices?.[0]?.message?.content;
+
+    if (!text || typeof text !== "string") {
+      throw new Error(
+        `Hugging Face chat completion returned invalid response: ${JSON.stringify(data).slice(0, 300)}`
+      );
     }
 
-    // Strip chat-template tokens
     return text
       .replace(/<\|im_end\|>/g, "")
       .replace(/<\|im_start\|>/g, "")
@@ -387,7 +361,7 @@ export class HFEmbedding extends BaseEmbedding {
 export function setupSettings() {
   validateEnvironment();
 
-  const llmModel = process.env.LLM_MODEL || "HuggingFaceTB/SmolLM2-1.7B-Instruct";
+  const llmModel = process.env.LLM_MODEL || "meta-llama/Llama-3.1-8B-Instruct:fastest";
   const hfToken = process.env.HF_TOKEN || "";
   const embedModelName = process.env.EMBEDDING_MODEL || "BAAI/bge-small-en-v1.5";
 

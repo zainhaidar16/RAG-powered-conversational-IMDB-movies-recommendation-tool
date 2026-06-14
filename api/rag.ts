@@ -31,6 +31,22 @@ function validateEnvironment(): void {
 // Helpers
 // ---------------------------------------------------------------------------
 
+function readableError(value: any): string {
+  if (!value) return "Unknown Hugging Face error";
+  if (typeof value === "string") return value;
+  if (typeof value === "object") {
+    if (typeof value.message === "string") return value.message;
+    if (typeof value.error === "string") return value.error;
+    if (typeof value.detail === "string") return value.detail;
+    try {
+      return JSON.stringify(value).slice(0, 500);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
 /** Fetch with automatic retry on transient 502/503/504 errors. */
 async function fetchWithRetry(
   url: string,
@@ -67,36 +83,38 @@ async function fetchWithRetry(
 
 /** Classify an HTTP status code into a human-friendly error category. */
 function classifyHttpError(status: number, body: string): string {
+  let parsed: any = null;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    parsed = null;
+  }
+
+  const hfMessage = parsed
+    ? readableError(parsed.error || parsed.message || parsed.detail || parsed)
+    : body.slice(0, 500);
+
   if (status === 401 || status === 403) {
-    return "Hugging Face API authentication failed. Verify your HF_TOKEN is valid.";
+    return `Hugging Face API authentication failed. Verify your HF_TOKEN is valid. Details: ${hfMessage}`;
   }
   if (status === 429) {
-    return "Hugging Face API rate limit exceeded. Please wait and retry.";
+    return `Hugging Face API rate limit exceeded. Please wait and retry. Details: ${hfMessage}`;
   }
   if (status === 502) {
-    return "Hugging Face Router returned 502 Bad Gateway. The provider behind the selected model is unavailable or overloaded. Confirm Vercel is using LLM_MODEL=meta-llama/Llama-3.1-8B-Instruct:fastest and redeploy without build cache.";
+    return `Hugging Face Router returned 502 Bad Gateway. The provider behind the selected model is unavailable or overloaded. Details: ${hfMessage}`;
   }
   if (status === 503) {
-    return "Hugging Face model is loading or temporarily unavailable. Retry shortly or use a smaller Hugging Face model.";
+    return `Hugging Face model is loading or temporarily unavailable. Details: ${hfMessage}`;
   }
   if (status === 504) {
-    return "Hugging Face request timed out. The selected model may be too slow for Vercel serverless.";
+    return `Hugging Face request timed out. Details: ${hfMessage}`;
   }
 
-  // Try to detect model-loading responses even on non-200 codes
-  try {
-    const parsed = JSON.parse(body);
-    if (parsed && typeof parsed === "object" && "estimated_time" in parsed) {
-      return `Hugging Face model is loading (estimated ${Math.ceil(parsed.estimated_time)}s). Please retry shortly.`;
-    }
-    if (parsed && typeof parsed === "object" && "error" in parsed) {
-      return `Hugging Face API error: ${parsed.error}`;
-    }
-  } catch {
-    // not JSON, fall through
+  if (parsed && typeof parsed === "object" && "estimated_time" in parsed) {
+    return `Hugging Face model is loading (estimated ${Math.ceil(parsed.estimated_time)}s). Please retry shortly.`;
   }
 
-  return `Hugging Face API error: ${status} - ${body.slice(0, 200)}`;
+  return `Hugging Face API error ${status}: ${hfMessage}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -166,48 +184,77 @@ export class HFLLM extends BaseLLM {
       Authorization: `Bearer ${this.token}`,
     };
 
-    const model = this.model.includes(":") ? this.model : `${this.model}:fastest`;
-    console.log(`Using Hugging Face Router chat completions with model "${model}"`);
+    const requestedModel = this.model.includes(":") ? this.model : `${this.model}:fastest`;
+    const modelCandidates = Array.from(
+      new Set([
+        requestedModel,
+        "meta-llama/Llama-3.1-8B-Instruct:fastest",
+        "Qwen/Qwen2.5-7B-Instruct:fastest",
+      ])
+    );
 
-    const res = await fetchWithRetry(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        model,
-        messages: chatMessages,
-        max_tokens: 512,
-        temperature: 0.1,
-        stream: false,
-      }),
-    });
+    let lastError: Error | null = null;
 
-    if (!res.ok) {
-      const errorText = await res.text();
-      throw new Error(classifyHttpError(res.status, errorText));
+    for (const model of modelCandidates) {
+      console.log(`Using Hugging Face Router chat completions with model "${model}"`);
+
+      try {
+        const res = await fetchWithRetry(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            model,
+            messages: chatMessages,
+            max_tokens: 512,
+            temperature: 0.1,
+            stream: false,
+          }),
+        });
+
+        if (!res.ok) {
+          const errorText = await res.text();
+          const message = classifyHttpError(res.status, errorText);
+          const error = new Error(message);
+
+          // Auth and rate-limit problems will not be fixed by another model.
+          if (res.status === 401 || res.status === 403 || res.status === 429) {
+            throw error;
+          }
+
+          console.warn(`Hugging Face model "${model}" failed: ${message}`);
+          lastError = error;
+          continue;
+        }
+
+        const data = await res.json();
+
+        if (data?.error) {
+          const message = `Hugging Face Router error for model "${model}": ${readableError(data.error)}`;
+          console.warn(message);
+          lastError = new Error(message);
+          continue;
+        }
+
+        const text = data?.choices?.[0]?.message?.content;
+
+        if (!text || typeof text !== "string") {
+          const message = `Hugging Face chat completion returned invalid response for model "${model}": ${JSON.stringify(data).slice(0, 300)}`;
+          console.warn(message);
+          lastError = new Error(message);
+          continue;
+        }
+
+        return text
+          .replace(/<\|im_end\|>/g, "")
+          .replace(/<\|im_start\|>/g, "")
+          .trim();
+      } catch (err: any) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        console.warn(`Hugging Face model "${model}" request failed: ${lastError.message}`);
+      }
     }
 
-    const data = await res.json();
-
-    if (data?.error) {
-      throw new Error(
-        typeof data.error === "string"
-          ? data.error
-          : JSON.stringify(data.error).slice(0, 300)
-      );
-    }
-
-    const text = data?.choices?.[0]?.message?.content;
-
-    if (!text || typeof text !== "string") {
-      throw new Error(
-        `Hugging Face chat completion returned invalid response: ${JSON.stringify(data).slice(0, 300)}`
-      );
-    }
-
-    return text
-      .replace(/<\|im_end\|>/g, "")
-      .replace(/<\|im_start\|>/g, "")
-      .trim();
+    throw lastError || new Error("All Hugging Face Router model attempts failed.");
   }
 }
 
@@ -276,7 +323,7 @@ export class HFEmbedding extends BaseEmbedding {
             ? ` Model is loading (estimated ${Math.ceil(data.estimated_time)}s).`
             : "";
         throw new Error(
-          `Hugging Face embedding error: ${data.error}.${extra}`
+          `Hugging Face embedding error: ${readableError(data.error)}.${extra}`
         );
       }
     }

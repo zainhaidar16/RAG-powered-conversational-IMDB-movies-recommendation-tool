@@ -7,8 +7,14 @@ import { createServer as createViteServer } from "vite";
 import { setupSettings, handleChatRequest } from "./api/rag.js";
 
 async function startServer() {
-  // Initialize LLM and Embedding settings
-  setupSettings();
+  // Initialize LLM and Embedding settings — exit early on config errors
+  try {
+    setupSettings();
+  } catch (err: any) {
+    console.error("❌ Failed to initialize AI settings:", err.message);
+    console.error("Please check your .env file and ensure HF_TOKEN, TMDB_BEARER_TOKEN, LLM_MODEL, and EMBEDDING_MODEL are set.");
+    process.exit(1);
+  }
   
   const app = express();
   const PORT = 3000;
@@ -27,7 +33,12 @@ async function startServer() {
       res.json(result);
     } catch (error: any) {
       console.error("Local server API error:", error);
-      res.status(500).json({ error: error.message || "Failed to process chat" });
+      res.status(500).json({
+        error: "RAG request failed",
+        details: error.message || "Failed to process chat",
+        provider: { llm: "huggingface", embedding: "huggingface" },
+        environment: "development",
+      });
     }
   });
 

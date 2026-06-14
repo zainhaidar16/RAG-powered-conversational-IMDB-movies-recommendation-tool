@@ -1,8 +1,8 @@
-# CineRAG 🎬 - Conversational Movie Recommendation Explorer
+# CineRAG 🎬 — Conversational Movie Recommendation Explorer
 
-CineRAG is an intelligent, high-performance conversational movie recommendation assistant. It utilizes a **hybrid search + dynamic Retrieval-Augmented Generation (RAG) architecture** to understand user queries semantically and recommend movies from **The Movie Database (TMDB)**. 
+CineRAG is an intelligent, high-performance conversational movie recommendation assistant. It utilizes a **hybrid search + dynamic Retrieval-Augmented Generation (RAG) architecture** to understand user queries semantically and recommend movies from **The Movie Database (TMDB)**.
 
-The application is built on a fully customizable, free-tier-friendly AI stack that supports running **completely offline/locally** using **Ollama**, or **serverless/anonymously** via **Hugging Face Serverless Inference API**.
+The application uses **Hugging Face Serverless Inference API** for both the LLM and embedding generation, making it fully cloud-based with no local GPU or model hosting required.
 
 ---
 
@@ -10,11 +10,10 @@ The application is built on a fully customizable, free-tier-friendly AI stack th
 
 *   **Semantic Conversational Search**: Chat with an LLM that understands film themes, tropes, directing/acting styles, complex plots, or release-date relationships.
 *   **Dynamic RAG Pipeline**: Movie results are dynamically fetched in real-time from TMDB based on parsed query parameters, instantly converted into vector-indexable document nodes, and loaded into an in-memory `VectorStoreIndex` powered by LlamaIndex.
-*   **Flexible AI Provider Stack**:
-    *   **Ollama (Local/Offline)**: Uses locally hosted models (e.g. `gemma4:31b-cloud` / `nomic-embed-text`) for both query-completion and embedding generation.
-    *   **Hugging Face Inference (Free/Serverless)**: Custom non-token/token-authenticated API wrappers (`HFLLM` and `HFEmbedding`) to leverage open-source models (like `Qwen/Qwen2.5-7B-Instruct`) for 100% free serverless API calls.
-    *   **OpenRouter (SaaS)**: Supports standard cloud integrations with commercial/free remote LLM models if preferred.
-*   **Robust Query Extraction & Sanitization**: Advanced prompt logic filters search queries to extract semantic subjects (e.g. mapping "best rated romantic movies" -> genre ID `10749` and `vote_average` filters), resolving zero-results search bugs.
+*   **Hugging Face AI Stack**:
+    *   **LLM**: Custom `HFLLM` wrapper around the Hugging Face Serverless Inference API (default model: `Qwen/Qwen2.5-7B-Instruct`).
+    *   **Embeddings**: Custom `HFEmbedding` wrapper for feature-extraction models (default model: `BAAI/bge-small-en-v1.5`).
+*   **Robust Query Extraction & Sanitization**: Advanced prompt logic filters search queries to extract semantic subjects (e.g. mapping "best rated romantic movies" → genre ID `10749` and `vote_average` filters), resolving zero-results search bugs.
 *   **Cinematic Dark Theme UI**: A beautifully crafted dashboard styled with curated dark hues, gradients, glowing components, and micro-animations.
 *   **Interactive Movie Grid & Detail Modals**:
     *   Dynamic card layouts featuring movie posters, ratings, and release metadata.
@@ -32,27 +31,27 @@ sequenceDiagram
     autonumber
     actor User as User Chat UI
     participant Server as Express Server (server.ts)
-    participant LLM as LLM (Ollama/HF/OpenRouter)
+    participant HF as Hugging Face API
     participant TMDB as TMDB API
     participant Index as LlamaIndex (VectorStoreIndex)
 
     User->>Server: Send message history & latest query
     Note over Server: If history exists, use LLM to condense<br/>into a single standalone search query.
-    Server->>LLM: Condense Query Prompt
-    LLM-->>Server: Standalone search query
+    Server->>HF: Condense Query Prompt
+    HF-->>Server: Standalone search query
     
-    Server->>LLM: Parse TMDB parameters (Genre, query keywords, person, limit)
-    LLM-->>Server: Inferred JSON parameters (tmdbParams)
+    Server->>HF: Parse TMDB parameters (Genre, query keywords, person, limit)
+    HF-->>Server: Inferred JSON parameters (tmdbParams)
     
     Server->>TMDB: Fetch movies matching tmdbParams
-    TMDB-->>Server: List of TMDB movie objects (up to 50)
+    TMDB-->>Server: List of TMDB movie objects (up to 30)
     
     Note over Server: Convert movie details to Document nodes.<br/>Initialize in-memory VectorStoreIndex.
     Server->>Index: Build index & create Query Engine
     
     Server->>Index: Query index with context & prompt
-    Index->>LLM: Embed & search similar vectors + synthesize response
-    LLM-->>Server: Conversational recommendation text + [RECOMMENDATIONS: ID1, ID2, ...]
+    Index->>HF: Embed & search similar vectors + synthesize response
+    HF-->>Server: Conversational recommendation text + [RECOMMENDATIONS: ID1, ID2, ...]
     
     Note over Server: Extract TMDB IDs and filter<br/>original movie list.
     Server-->>User: Return response text + movie metadata + parameter logs
@@ -64,7 +63,9 @@ sequenceDiagram
 ## 🛠️ Tech Stack
 
 *   **Frontend**: React (v19), Tailwind CSS, Framer Motion (via `motion/react`), Lucide Icons, Radix UI Tooltip, React-Markdown.
-*   **Backend**: Node.js, Express, `llamaindex` (LlamaIndex TS SDK), `@llamaindex/ollama`, `@llamaindex/openai`.
+*   **Backend**: Node.js, Express, `llamaindex` (LlamaIndex TS SDK).
+*   **AI Provider**: Hugging Face Serverless Inference API (LLM + Embeddings).
+*   **Movie Data**: The Movie Database (TMDB) API.
 *   **Development / Build Tools**: Vite (v6), esbuild, `tsx` (TypeScript Executor).
 
 ---
@@ -74,50 +75,43 @@ sequenceDiagram
 To run the application, configure your `.env` file. A sample configuration template is provided in `.env.example`:
 
 ```ini
-# Model Providers Configuration
-# LLM Provider: "huggingface", "ollama", or "openrouter"
-LLM_PROVIDER="ollama"
-LLM_MODEL="gemma4:31b-cloud"
+# Hugging Face AI Configuration
+LLM_PROVIDER="huggingface"
+LLM_MODEL="Qwen/Qwen2.5-7B-Instruct"
 
-# Embedding Provider: "huggingface" or "ollama"
-EMBEDDING_PROVIDER="ollama"
-EMBEDDING_MODEL="nomic-embed-text"
+EMBEDDING_PROVIDER="huggingface"
+EMBEDDING_MODEL="BAAI/bge-small-en-v1.5"
 
-# Hugging Face Access Token (Optional: Can be left empty for anonymous calls)
-HF_TOKEN=""
+# Hugging Face Access Token (required)
+HF_TOKEN="your_hf_token_here"
 
-# TMDB Movie Database API Credentials (Bearer Token)
+# TMDB Movie Database API Credentials (required)
 TMDB_BEARER_TOKEN="your_tmdb_bearer_token_here"
 
 # App Settings
 APP_URL="http://localhost:3000"
 ```
 
-### 1. Setting Up TMDB API
+### Required Environment Variables
+
+| Variable | Description |
+|---|---|
+| `HF_TOKEN` | Hugging Face access token. Generate a **Read** token from [Hugging Face Settings → Tokens](https://huggingface.co/settings/tokens). |
+| `TMDB_BEARER_TOKEN` | TMDB API Read Access Token (Bearer). Get it from [TMDB API Settings](https://www.themoviedb.org/settings/api). |
+| `LLM_MODEL` | Hugging Face model ID for the LLM (default: `Qwen/Qwen2.5-7B-Instruct`). |
+| `EMBEDDING_MODEL` | Hugging Face model ID for embeddings (default: `BAAI/bge-small-en-v1.5`). |
+
+### Setting Up TMDB API
 1. Visit [The Movie Database (TMDB)](https://www.themoviedb.org/) and log in or register.
-2. Navigate to your Account Settings -> **API** section.
+2. Navigate to your Account Settings → **API** section.
 3. Request an API key (developer category).
 4. Copy your **API Read Access Token (Bearer Token)** and paste it as `TMDB_BEARER_TOKEN` in `.env`.
 
-### 2. Setting Up Ollama (Offline Mode)
-To run local models:
-1. Download and install [Ollama](https://ollama.com/).
-2. Start the Ollama background service.
-3. Pull the embedding model in your terminal:
-   ```bash
-   ollama pull nomic-embed-text
-   ```
-4. Pull the LLM of your choice (e.g. `gemma:2b`, `llama3`, or `gemma4:31b-cloud` if using local custom tags):
-   ```bash
-   ollama run gemma4:31b-cloud
-   ```
-5. Ensure your `.env` lists `"ollama"` as your providers.
-
-### 3. Setting Up Hugging Face (Free Cloud Mode)
-If you do not want to run local models or lack system memory:
-1. Set `LLM_PROVIDER="huggingface"` and `EMBEDDING_PROVIDER="huggingface"`.
-2. Configure `LLM_MODEL` (e.g., `"Qwen/Qwen2.5-7B-Instruct"`) and `EMBEDDING_MODEL` (e.g., `"BAAI/bge-small-en-v1.5"`).
-3. If you have a Hugging Face Account, generate a Read Access Token from Settings and set `HF_TOKEN="your_hf_token"`. Leaving it blank will attempt anonymous free-tier API inference.
+### Setting Up Hugging Face
+1. Create an account at [Hugging Face](https://huggingface.co/).
+2. Navigate to Settings → [Access Tokens](https://huggingface.co/settings/tokens).
+3. Generate a **Read** access token.
+4. Set `HF_TOKEN` in your `.env` file with the generated token.
 
 ---
 
@@ -141,6 +135,21 @@ If you do not want to run local models or lack system memory:
     This launches the Node/Express server and hooks Vite middleware. The backend watch tool `tsx watch` triggers automatic reloads if you modify code or update the `.env` settings.
 4.  **Open Browser**:
     Navigate to [http://localhost:3000](http://localhost:3000) to start exploring movies!
+
+---
+
+## ☁️ Deploying to Vercel
+
+1.  Push your repository to GitHub.
+2.  Import the project into [Vercel](https://vercel.com/).
+3.  Add the following **Environment Variables** in the Vercel dashboard (Settings → Environment Variables):
+    *   `HF_TOKEN`
+    *   `TMDB_BEARER_TOKEN`
+    *   `LLM_MODEL`
+    *   `EMBEDDING_MODEL`
+4.  Deploy the project.
+
+> **Important**: After changing any Vercel environment variable, you must **redeploy** the project for the changes to take effect.
 
 ---
 

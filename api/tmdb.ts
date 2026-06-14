@@ -1,13 +1,4 @@
-import { OpenAI } from "@llamaindex/openai";
 import { Settings } from "llamaindex";
-import dotenv from "dotenv";
-
-dotenv.config();
-
-const TMDB_TOKEN = process.env.TMDB_BEARER_TOKEN;
-if (!TMDB_TOKEN) {
-  console.warn("WARNING: TMDB_BEARER_TOKEN environment variable is missing.");
-}
 
 type TMDBParams = {
   search_type: "person" | "movie" | "search_query" | "discover_popular" | "discover_revenue" | "discover_top_rated" | "discover_budget";
@@ -41,14 +32,11 @@ const TMDB_GENRES: Record<string, number> = {
   western: 37
 };
 
-export async function getTMDBParams(message: string, openRouterApiKey: string): Promise<TMDBParams> {
-  const llm = Settings.llm || new OpenAI({
-      model: "nvidia/nemotron-nano-9b-v2:free",
-      apiKey: openRouterApiKey || "dummy",
-      additionalSessionOptions: {
-        baseURL: "https://openrouter.ai/api/v1",
-      },
-  });
+export async function getTMDBParams(message: string): Promise<TMDBParams> {
+  const llm = Settings.llm;
+  if (!llm) {
+    throw new Error("LLM not initialized. Call setupSettings() before getTMDBParams().");
+  }
 
   const prompt = `You are a movie search parameter extractor. Based on the user message, extract search query parameters for The Movie Database (TMDB). Return ONLY valid JSON.
 Format:
@@ -58,7 +46,7 @@ Format:
   "movie_name": "name of movie if type is movie",
   "query": "search keywords if type is search_query",
   "genre": "action" | "adventure" | "animation" | "comedy" | "crime" | "documentary" | "drama" | "family" | "fantasy" | "history" | "horror" | "music" | "mystery" | "romance" | "scifi" | "thriller" | "war" | "western" (if a specific genre is mentioned),
-  "number_of_movies_requested": number (default to 50 if unspecified, up to 100)
+  "number_of_movies_requested": number (default to 20 if unspecified, up to 30)
 }
 
 CRITICAL RULES FOR EXTRACTION:
@@ -87,15 +75,24 @@ JSON Response:`;
     if (text.startsWith("\`\`\`json")) {
         text = text.replace(/^\`\`\`json/, "").replace(/\`\`\`$/, "").trim();
     }
+    if (text.startsWith("\`\`\`")) {
+        text = text.replace(/^\`\`\`/, "").replace(/\`\`\`$/, "").trim();
+    }
     const params = JSON.parse(text);
     return params;
   } catch (err) {
     console.error("Failed to parse LLM TMDB params:", err);
-    return { search_type: "discover_popular", number_of_movies_requested: 50 };
+    return { search_type: "discover_popular", number_of_movies_requested: 20 };
   }
 }
 
 export async function fetchFromTMDB(params: TMDBParams): Promise<any[]> {
+  const TMDB_TOKEN = process.env.TMDB_BEARER_TOKEN;
+  if (!TMDB_TOKEN) {
+    throw new Error(
+      "TMDB_BEARER_TOKEN is missing. Check that .env is in the project root and the variable name is exactly TMDB_BEARER_TOKEN."
+    );
+  }
   const headers = { Authorization: `Bearer ${TMDB_TOKEN}` };
   let movies: any[] = [];
   
@@ -116,8 +113,8 @@ export async function fetchFromTMDB(params: TMDBParams): Promise<any[]> {
       sortOption = "popularity.desc";
     }
 
-    const maxPages = Math.ceil((params.number_of_movies_requested || 50) / 20);
-    const pagesToFetch = Math.min(Math.max(1, maxPages), 5);
+    const maxPages = Math.ceil((params.number_of_movies_requested || 20) / 20);
+    const pagesToFetch = Math.min(Math.max(1, maxPages), 2);
 
     for (let page = 1; page <= pagesToFetch; page++) {
       const url = `https://api.themoviedb.org/3/discover/movie?with_genres=${genreId}&sort_by=${sortOption}${extraParams}&page=${page}`;
@@ -178,8 +175,8 @@ export async function fetchFromTMDB(params: TMDBParams): Promise<any[]> {
       endpoint = "/movie/popular"; // fallback
     }
 
-    const maxPages = Math.ceil((params.number_of_movies_requested || 50) / 20);
-    const pagesToFetch = Math.min(Math.max(1, maxPages), 5); // up to 5 pages (100 movies)
+    const maxPages = Math.ceil((params.number_of_movies_requested || 20) / 20);
+    const pagesToFetch = Math.min(Math.max(1, maxPages), 2);
 
     for (let page = 1; page <= pagesToFetch; page++) {
       const url = `https://api.themoviedb.org/3${endpoint}${endpoint.includes('?') ? '&' : '?'}page=${page}`;
@@ -191,7 +188,7 @@ export async function fetchFromTMDB(params: TMDBParams): Promise<any[]> {
     }
   }
   
-  // Return the requested number of movies
-  const limit = Math.min(params.number_of_movies_requested || 50, 100);
+  // Return the requested number of movies (capped at 30 for production safety)
+  const limit = Math.min(params.number_of_movies_requested || 20, 30);
   return movies.slice(0, limit);
 }

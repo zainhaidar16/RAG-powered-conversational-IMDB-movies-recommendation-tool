@@ -32,7 +32,7 @@ type Message = {
 const INITIAL_MESSAGE: Message = {
   id: "welcome",
   role: "assistant",
-  content: "Hello! I am **CineRAG**, your intelligent movie recommendation assistant. I pull real-time data from **The Movie Database (TMDB)** and index it dynamically into a **local Vector Store RAG pipeline** powered by **Ollama** to answer your questions semantically.\n\nTry asking me things like:\n* *\"Recommend some high-concept sci-fi movies about time travel and space exploration\"*\n* *\"What are Christopher Nolan's highest-rated movies? Tell me about the plot of Interstellar.\"*\n* *\"Show me some high-revenue action thriller films from the 2000s\"*",
+  content: "Hello! I am **CineRAG**, your intelligent movie recommendation assistant. I pull real-time data from **The Movie Database (TMDB)** and index it dynamically into a **Vector Store RAG pipeline** powered by **Hugging Face** to answer your questions semantically.\n\nTry asking me things like:\n* *\"Recommend some high-concept sci-fi movies about time travel and space exploration\"*\n* *\"What are Christopher Nolan's highest-rated movies? Tell me about the plot of Interstellar.\"*\n* *\"Show me some high-revenue action thriller films from the 2000s\"*",
 };
 
 const SUGGESTIONS = [
@@ -189,7 +189,8 @@ export default function App() {
       const data = await response.json();
       
       if (!response.ok) {
-        throw new Error(data.error || "Failed to get response");
+        const detail = data.details ? ` — ${data.details}` : "";
+        throw new Error((data.error || "Failed to get response") + detail);
       }
       
       setMessages((prev) => [

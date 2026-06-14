@@ -69,19 +69,27 @@ Notes for search_type:
 User message: ${message}
 JSON Response:`;
 
+  const response = await llm.complete({ prompt });
+  let text = response.text.trim();
+
+  if (text.startsWith("```json")) {
+    text = text.replace(/^```json/, "").replace(/```$/, "").trim();
+  }
+  if (text.startsWith("```")) {
+    text = text.replace(/^```/, "").replace(/```$/, "").trim();
+  }
+  if (text.startsWith("`json")) {
+    text = text.replace(/^`json/, "").replace(/```$/, "").trim();
+  }
+  if (text.startsWith("`")) {
+    text = text.replace(/^`/, "").replace(/```$/, "").trim();
+  }
+
   try {
-    const response = await llm.complete({ prompt });
-    let text = response.text.trim();
-    if (text.startsWith("\`\`\`json")) {
-        text = text.replace(/^\`\`\`json/, "").replace(/\`\`\`$/, "").trim();
-    }
-    if (text.startsWith("\`\`\`")) {
-        text = text.replace(/^\`\`\`/, "").replace(/\`\`\`$/, "").trim();
-    }
     const params = JSON.parse(text);
     return params;
   } catch (err) {
-    console.error("Failed to parse LLM TMDB params:", err);
+    console.error("Failed to parse LLM TMDB params JSON:", err, "Raw text:", text);
     return { search_type: "discover_popular", number_of_movies_requested: 20 };
   }
 }

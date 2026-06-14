@@ -85,6 +85,18 @@ function classifyHttpError(status: number, body: string): string {
   } catch {
     // not JSON — fall through
   }
+  if (status === 502) {
+    return "Hugging Face returned 502 Bad Gateway. The selected model is likely unavailable, overloaded, or too heavy for Serverless Inference. Use a smaller Hugging Face model such as HuggingFaceTB/SmolLM2-1.7B-Instruct.";
+  }
+
+  if (status === 503) {
+    return "Hugging Face model is loading or temporarily unavailable. Retry shortly or use a smaller Hugging Face model.";
+  }
+
+  if (status === 504) {
+    return "Hugging Face request timed out. The selected model may be too slow for Vercel serverless.";
+  }
+
   return `Hugging Face API error: ${status} - ${body.slice(0, 200)}`;
 }
 
@@ -170,7 +182,7 @@ export class HFLLM extends BaseLLM {
       body: JSON.stringify({
         inputs: prompt,
         parameters: {
-          max_new_tokens: 1024,
+          max_new_tokens: 512,
           temperature: 0.1,
           return_full_text: false,
         },
@@ -375,7 +387,7 @@ export class HFEmbedding extends BaseEmbedding {
 export function setupSettings() {
   validateEnvironment();
 
-  const llmModel = process.env.LLM_MODEL || "Qwen/Qwen2.5-7B-Instruct";
+  const llmModel = process.env.LLM_MODEL || "HuggingFaceTB/SmolLM2-1.7B-Instruct";
   const hfToken = process.env.HF_TOKEN || "";
   const embedModelName = process.env.EMBEDDING_MODEL || "BAAI/bge-small-en-v1.5";
 
@@ -420,11 +432,9 @@ Standalone query:`;
       });
       searchMessage = response.text.trim();
       console.log("Condensed Search Query:", searchMessage);
-    } catch (err) {
-      console.error(
-        "Failed to condense query, falling back to original message:",
-        err
-      );
+    } catch (err: any) {
+      console.error("Failed to condense query:", err);
+      throw new Error(err.message || "Hugging Face failed during query condensation.");
     }
   }
 
@@ -435,8 +445,8 @@ Standalone query:`;
 
   // 3. Cap movie count for Vercel timeout safety
   tmdbParams.number_of_movies_requested = Math.min(
-    Math.max(tmdbParams.number_of_movies_requested || 20, 1),
-    30
+    Math.max(tmdbParams.number_of_movies_requested || 10, 1),
+    10
   );
 
   // 4. Fetch movies from TMDB

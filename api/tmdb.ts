@@ -50,7 +50,7 @@ function cleanJsonText(text: string): string {
 
 function cleanPersonName(name: string): string {
   return name
-    .replace(/\b(show|me|all|list|movies|movie|films|film|by|from|of|the|a|an|please|recommend|give|highest|rated|best|top|tell|about|plot)\b/gi, " ")
+    .replace(/\b(show|me|all|list|movies|movie|films|film|by|from|of|the|a|an|please|recommend|give|highest|rated|best|top|tell|about|plot|what|are|is|some)\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -109,8 +109,9 @@ function inferYears(text: string): { year_from?: number; year_to?: number } {
 }
 
 function deterministicParams(message: string): TMDBParams | null {
-  const original = message.replace(/["']/g, " ").replace(/\s+/g, " ").trim();
-  const text = original.toLowerCase();
+  const original = message.replace(/[“”]/g, " ").replace(/\s+/g, " ").trim();
+  const normalizedOriginal = original.replace(/[’]/g, "'");
+  const text = normalizedOriginal.toLowerCase();
   const years = inferYears(text);
   const genres = inferGenres(text);
   const keywords = inferKeywords(text);
@@ -118,13 +119,24 @@ function deterministicParams(message: string): TMDBParams | null {
   const wantsRating = /highest[- ]?rated|top[- ]?rated|best rated|rating|rated/.test(text);
   const wantsBudget = /budget|expensive/.test(text);
 
-  const directedBy = original.match(/(?:movies|films)?\s*directed\s+by\s+([a-zA-Z .'-]+)/i);
+  const possessivePerson = normalizedOriginal.match(/(?:what\s+are\s+)?([A-Z][a-zA-Z.'-]+\s+[A-Z][a-zA-Z.'-]+)(?:'s|\s+s)\s+(?:highest[- ]rated|best|top|movies|films)/i);
+  if (possessivePerson?.[1]) {
+    return {
+      search_type: "person",
+      person_name: cleanPersonName(possessivePerson[1]),
+      person_role: "any",
+      sort_by: wantsRating ? "rating" : "popularity",
+      number_of_movies_requested: 999,
+    };
+  }
+
+  const directedBy = normalizedOriginal.match(/(?:movies|films)?\s*directed\s+by\s+([a-zA-Z .'-]+)/i);
   if (directedBy?.[1]) {
     return { search_type: "person", person_name: cleanPersonName(directedBy[1]), person_role: "director", sort_by: wantsRating ? "rating" : "release_date", number_of_movies_requested: 999 };
   }
 
   if (text.includes("directed") || text.includes("director") || text.includes("filmmaker") || text.includes("made by")) {
-    const match = original.match(/([a-zA-Z .'-]+?)\s+(?:directed|director|filmography as director|movies as director)/i) || original.match(/(?:director|filmmaker)\s+([a-zA-Z .'-]+)/i) || original.match(/(?:movies|films)\s+by\s+([a-zA-Z .'-]+)/i);
+    const match = normalizedOriginal.match(/([a-zA-Z .'-]+?)\s+(?:directed|director|filmography as director|movies as director)/i) || normalizedOriginal.match(/(?:director|filmmaker)\s+([a-zA-Z .'-]+)/i) || normalizedOriginal.match(/(?:movies|films)\s+by\s+([a-zA-Z .'-]+)/i);
     const person = match?.[1] ? cleanPersonName(match[1]) : "";
     if (person && person.split(" ").length >= 2) {
       return { search_type: "person", person_name: person, person_role: "director", sort_by: wantsRating ? "rating" : "release_date", number_of_movies_requested: 999 };
@@ -132,19 +144,14 @@ function deterministicParams(message: string): TMDBParams | null {
   }
 
   if (text.includes("starring") || text.includes("featuring") || text.includes("acted") || text.includes("actor") || text.includes("cast")) {
-    const match = original.match(/(?:movies|films)?\s*(?:starring|featuring)\s+([a-zA-Z .'-]+)/i) || original.match(/([a-zA-Z .'-]+?)\s+(?:movies|films|acting credits|actor credits)/i) || original.match(/(?:actor|actress)\s+([a-zA-Z .'-]+)/i);
+    const match = normalizedOriginal.match(/(?:movies|films)?\s*(?:starring|featuring)\s+([a-zA-Z .'-]+)/i) || normalizedOriginal.match(/([a-zA-Z .'-]+?)\s+(?:movies|films|acting credits|actor credits)/i) || normalizedOriginal.match(/(?:actor|actress)\s+([a-zA-Z .'-]+)/i);
     const person = match?.[1] ? cleanPersonName(match[1]) : "";
     if (person && person.split(" ").length >= 2) {
       return { search_type: "person", person_name: person, person_role: "actor", sort_by: wantsRating ? "rating" : "release_date", number_of_movies_requested: 999 };
     }
   }
 
-  const possessivePerson = original.match(/([A-Z][a-zA-Z.'-]+\s+[A-Z][a-zA-Z.'-]+)'?s\s+(?:highest[- ]rated|best|top|movies|films)/);
-  if (possessivePerson?.[1]) {
-    return { search_type: "person", person_name: cleanPersonName(possessivePerson[1]), person_role: "any", sort_by: wantsRating ? "rating" : "popularity", number_of_movies_requested: 999 };
-  }
-
-  const plotMovie = original.match(/plot\s+of\s+([a-zA-Z0-9 .:'-]+)/i) || original.match(/about\s+the\s+plot\s+of\s+([a-zA-Z0-9 .:'-]+)/i);
+  const plotMovie = normalizedOriginal.match(/plot\s+of\s+([a-zA-Z0-9 .:'-]+)/i) || normalizedOriginal.match(/about\s+the\s+plot\s+of\s+([a-zA-Z0-9 .:'-]+)/i);
   if (plotMovie?.[1] && !possessivePerson) {
     return { search_type: "movie", movie_name: plotMovie[1].trim(), number_of_movies_requested: 10 };
   }
@@ -152,7 +159,7 @@ function deterministicParams(message: string): TMDBParams | null {
   if (wantsRevenue || wantsRating || wantsBudget || genres.length > 0 || keywords.length > 0 || years.year_from) {
     return {
       search_type: wantsRevenue ? "discover_revenue" : wantsBudget ? "discover_budget" : wantsRating ? "discover_top_rated" : "search_query",
-      query: keywords.length > 0 ? keywords.join(" ") : original,
+      query: keywords.length > 0 ? keywords.join(" ") : normalizedOriginal,
       genres,
       keywords,
       ...years,
@@ -190,9 +197,10 @@ Format:
   "number_of_movies_requested": number
 }
 Rules:
+- For possessive person questions like "Christopher Nolan's highest-rated movies", use search_type person.
 - For person/director/actor queries, use search_type person and person_role correctly.
 - For high revenue, box office, grossing, use discover_revenue and sort_by revenue.
-- For highest rated, top rated, best rated, use discover_top_rated and sort_by rating.
+- For highest rated, top rated, best rated, use discover_top_rated and sort_by rating only when the query is not about a person.
 - For action thriller, include genres ["action", "thriller"].
 - For sci-fi, use genre "scifi".
 - For 2000s, set year_from 2000 and year_to 2009.

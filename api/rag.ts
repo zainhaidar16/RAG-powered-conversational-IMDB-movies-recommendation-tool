@@ -186,14 +186,34 @@ export function setupSettings() {
   Settings.embedModel = new HFEmbedding(embedModelName, hfToken);
 }
 
-function isDirectorQuery(message: string, params: any): boolean {
-  const text = message.toLowerCase();
-  return params?.person_role === "director" || text.includes("directed") || text.includes("director");
+function buildMoviePayload(movie: any) {
+  return {
+    title: movie.title || movie.name,
+    poster_path: movie.poster_path,
+    tmdbId: movie.id,
+    release_date: movie.release_date || movie.first_air_date,
+    vote_average: movie.vote_average,
+    overview: movie.overview,
+  };
+}
+
+function buildDeterministicPersonReply(movies: any[], params: any): string {
+  const role = params.person_role === "director" ? "directed by" : params.person_role === "actor" ? "featuring" : "linked to";
+  const person = params.person_name || "this person";
+  const lines = movies.map((movie: any, index: number) => {
+    const title = movie.title || movie.name;
+    const year = (movie.release_date || movie.first_air_date || "N/A").slice(0, 4) || "N/A";
+    const rating = movie.vote_average ? `${Number(movie.vote_average).toFixed(1)}/10` : "N/A";
+    const roleText = movie.person_job ? `, role: ${movie.person_job}` : "";
+    return `${index + 1}. ${title} (${year}), Rating: ${rating}${roleText}`;
+  });
+  return `Found ${movies.length} TMDB movie result${movies.length === 1 ? "" : "s"} ${role} ${person}:\n\n${lines.join("\n")}`;
 }
 
 export async function handleChatRequest(messages: any[]) {
   const latestMessage = messages[messages.length - 1].content;
   let searchMessage = latestMessage;
+
   if (messages.length > 1) {
     const chatHistoryText = messages.slice(0, -1).map((m: any) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`).join("\n");
     const condensationPrompt = `You are a helper that condenses chat history and a follow-up query into a single standalone query for movie database searches.\nGiven the following conversation history and the latest user query, rewrite the query to be a standalone, self-contained search query in English.\nDo NOT reply with anything other than the rewritten query itself.\n\nConversation History:\n${chatHistoryText}\n\nLatest User Query: ${latestMessage}\nStandalone query:`;
@@ -210,30 +230,33 @@ export async function handleChatRequest(messages: any[]) {
   console.log("Parsing TMDB params for condensed query:", searchMessage);
   const tmdbParams = await getTMDBParams(searchMessage);
   console.log("TMDB Params:", tmdbParams);
-  tmdbParams.number_of_movies_requested = Math.min(Math.max(tmdbParams.number_of_movies_requested || 10, 1), 10);
 
-  let tmdbMovies = await fetchFromTMDB(tmdbParams);
-  if (tmdbParams.search_type === "person" && isDirectorQuery(searchMessage, tmdbParams)) {
-    tmdbMovies = tmdbMovies.filter((movie: any) => movie.person_job === "Director");
-    console.log(`Filtered to ${tmdbMovies.length} director credits only`);
-  }
+  const tmdbMovies = await fetchFromTMDB(tmdbParams);
   console.log(`Fetched ${tmdbMovies.length} movies from TMDB`);
 
   if (!tmdbMovies || tmdbMovies.length === 0) {
     return { reply: `I couldn't find matching movies in TMDB for this query.`, movies: [], inferredParams: tmdbParams };
   }
 
+  if (tmdbParams.search_type === "person") {
+    return {
+      reply: buildDeterministicPersonReply(tmdbMovies, tmdbParams),
+      movies: tmdbMovies.map(buildMoviePayload),
+      inferredParams: tmdbParams,
+    };
+  }
+
   const documents = tmdbMovies.map((movie: any) => new Document({
-    text: `TMDB ID: ${movie.id}\nTitle: ${movie.title || movie.name}\nRelease Date: ${movie.release_date || movie.first_air_date}\nRating: ${movie.vote_average || "N/A"}/10\nPopularity: ${movie.popularity}\nPerson: ${tmdbParams.person_name || "N/A"}\nPerson Role: ${movie.person_job || "N/A"}\n${movie.person_job ? `Role for ${tmdbParams.person_name}: ${movie.person_job}` : ""}\nOverview: ${movie.overview}`,
-    metadata: { title: movie.title || movie.name, poster_path: movie.poster_path, tmdbId: String(movie.id), person_job: movie.person_job || "" },
+    text: `TMDB ID: ${movie.id}\nTitle: ${movie.title || movie.name}\nRelease Date: ${movie.release_date || movie.first_air_date}\nRating: ${movie.vote_average || "N/A"}/10\nPopularity: ${movie.popularity}\nOverview: ${movie.overview}`,
+    metadata: { title: movie.title || movie.name, poster_path: movie.poster_path, tmdbId: String(movie.id) },
   }));
 
   const index = await VectorStoreIndex.fromDocuments(documents);
   const queryEngine = index.asQueryEngine({ similarityTopK: tmdbMovies.length });
   const allowedIds = tmdbMovies.map((movie: any) => movie.id).join(", ");
-  const movieList = tmdbMovies.map((movie: any) => `- ${movie.title || movie.name} (${movie.release_date || movie.first_air_date || "N/A"}), TMDB ID ${movie.id}, rating ${movie.vote_average || "N/A"}, role ${movie.person_job || "N/A"}`).join("\n");
-  const strictRoleRule = isDirectorQuery(searchMessage, tmdbParams) ? `\nDIRECTOR QUERY RULE: Only recommend movies where Person Role is Director for ${tmdbParams.person_name}.` : "";
-  const prompt = `You are a movie recommendation assistant. You MUST answer using ONLY the movies in the provided context and movie list below.\nDo NOT mention or recommend any movie outside this list.\nDo NOT say there is no information if the movie list contains matching movies.\nAllowed TMDB IDs: ${allowedIds}\nSearch Type: "${tmdbParams.search_type}"\nAssociated Person: "${tmdbParams.person_name || "N/A"}"${strictRoleRule}\n\nMovie list you are allowed to use:\n${movieList}\n\nAnswer the user's query clearly with titles, years, ratings, and short summaries from context.\nAt the very end, output exactly one line:\n[RECOMMENDATIONS: id1, id2, ...]\nOnly include numeric TMDB IDs from the allowed list.\n\nQuery: ${latestMessage}`;
+  const movieList = tmdbMovies.map((movie: any) => `- ${movie.title || movie.name} (${movie.release_date || movie.first_air_date || "N/A"}), TMDB ID ${movie.id}, rating ${movie.vote_average || "N/A"}`).join("\n");
+  const prompt = `You are a movie recommendation assistant. Use ONLY the movies in this list.\nDo NOT recommend any movie outside this list.\nAllowed TMDB IDs: ${allowedIds}\n\nMovie list:\n${movieList}\n\nAnswer the user's query clearly with titles, years, ratings, and short summaries from context.\nAt the very end, output exactly one line:\n[RECOMMENDATIONS: id1, id2, ...]\nOnly include numeric TMDB IDs from the allowed list.\n\nQuery: ${latestMessage}`;
+
   const response = await queryEngine.query({ query: prompt });
   let replyText = typeof response.response === "string" ? response.response : String(response.response);
 
@@ -249,7 +272,7 @@ export async function handleChatRequest(messages: any[]) {
 
   return {
     reply: replyText,
-    movies: matchedMovies.map((m: any) => ({ title: m.title || m.name, poster_path: m.poster_path, tmdbId: m.id, release_date: m.release_date || m.first_air_date, vote_average: m.vote_average, overview: m.overview })),
+    movies: matchedMovies.map(buildMoviePayload),
     inferredParams: tmdbParams,
   };
 }
